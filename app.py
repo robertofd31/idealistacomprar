@@ -5,6 +5,36 @@ from streamlit_folium import folium_static
 import requests
 from datetime import datetime
 import time
+import json
+import os
+import pickle
+
+# Título de la aplicación
+st.title("Explorador de Propiedades - Estilo Idealista")
+
+# Función para guardar datos en un archivo
+def save_data(data, filename="property_data.pkl"):
+    with open(filename, 'wb') as f:
+        pickle.dump(data, f)
+
+    # Guardar también la fecha de la última consulta
+    timestamp = datetime.now()
+    with open("last_query_time.pkl", 'wb') as f:
+        pickle.dump(timestamp, f)
+
+# Función para cargar datos desde un archivo
+def load_data(filename="property_data.pkl"):
+    if os.path.exists(filename):
+        with open(filename, 'rb') as f:
+            return pickle.load(f)
+    return None
+
+# Función para cargar la fecha de la última consulta
+def load_timestamp():
+    if os.path.exists("last_query_time.pkl"):
+        with open("last_query_time.pkl", 'rb') as f:
+            return pickle.load(f)
+    return None
 
 def contains_illegal_occupation(labels):
     if isinstance(labels, list):
@@ -76,26 +106,17 @@ def fetch_properties_data():
     # Convertir a DataFrame
     df = pd.DataFrame(all_properties)
 
-    # Guardar timestamp de la consulta
-    st.session_state.last_query_time = datetime.now()
-    st.session_state.properties_data = df
+    # Guardar datos en archivo
+    save_data(df)
 
     return df
 
-# Título de la aplicación
-st.title("Explorador de Propiedades - Estilo Idealista")
-
-# Inicializar estado de la sesión
-if 'properties_data' not in st.session_state:
-    st.session_state.properties_data = None
-if 'last_query_time' not in st.session_state:
-    st.session_state.last_query_time = None
+# Cargar datos almacenados si existen
+df_properties = load_data()
+last_query_time = load_timestamp()
 
 # Barra lateral
 st.sidebar.header("Filtros de Resultados")
-
-# Usar datos almacenados si existen
-df_properties = st.session_state.properties_data
 
 if df_properties is not None:
     # Obtener rangos de los datos
@@ -166,12 +187,15 @@ st.sidebar.header("Búsqueda de Propiedades")
 st.sidebar.info("Búsqueda fija: Viviendas en venta en Madrid hasta 150.000€")
 
 # Mostrar la hora de la última consulta
-if st.session_state.last_query_time:
-    time_diff = datetime.now() - st.session_state.last_query_time
+if last_query_time:
+    time_diff = datetime.now() - last_query_time
+    days = time_diff.days
     hours, remainder = divmod(time_diff.seconds, 3600)
     minutes, seconds = divmod(remainder, 60)
 
-    if hours > 0:
+    if days > 0:
+        time_str = f"{days} días, {hours} horas"
+    elif hours > 0:
         time_str = f"{hours} horas, {minutes} minutos"
     elif minutes > 0:
         time_str = f"{minutes} minutos, {seconds} segundos"
@@ -183,7 +207,6 @@ if st.session_state.last_query_time:
 # Botón para actualizar datos desde la API al final del sidebar
 if st.sidebar.button("Actualizar Datos"):
     df_properties = fetch_properties_data()
-    st.rerun()  # Recargar la página para mostrar filtros actualizados
 
 # Si no hay datos, detener ejecución
 if df_properties is None:
