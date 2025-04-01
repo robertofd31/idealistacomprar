@@ -14,11 +14,23 @@ def contains_illegal_occupation(labels):
     return False
 
 # Función para llamar a la API y obtener todas las páginas
-def fetch_properties_data(querystring):
+def fetch_properties_data():
     url = "https://idealista7.p.rapidapi.com/listhomes"
     headers = {
         "x-rapidapi-key": "aa2dd641d5msh2565cfba16fdf3cp172729jsn62ebc6b556b5",
         "x-rapidapi-host": "idealista7.p.rapidapi.com"
+    }
+
+    # Parámetros fijos de la consulta
+    querystring = {
+        "order": "lowestprice",
+        "operation": "sale",
+        "locationId": "0-EU-ES-28",
+        "locationName": "Madrid",
+        "maxItems": "40",
+        "location": "es",
+        "locale": "es",
+        "maxPrice": "150000"
     }
 
     all_properties = []
@@ -79,31 +91,13 @@ if 'properties_data' not in st.session_state:
 if 'last_query_time' not in st.session_state:
     st.session_state.last_query_time = None
 
-# Mostrar filtros en la barra lateral
-st.sidebar.header("Filtros de Búsqueda API")
-
-# Parámetros para la API
-location_name = st.sidebar.text_input("Ubicación", "Madrid")
-operation = st.sidebar.selectbox("Operación", ["sale", "rent"], 0)
-min_price_api = st.sidebar.number_input("Precio mínimo (€)", min_value=0, value=50000, step=5000)
-max_price_api = st.sidebar.number_input("Precio máximo (€)", min_value=10000, value=150000, step=5000)
-order_by = st.sidebar.selectbox("Ordenar por", ["lowestprice", "highestprice", "newest"], 0)
+# Mostrar info de búsqueda fija
+st.sidebar.header("Búsqueda de Propiedades")
+st.sidebar.info("Búsqueda fija: Viviendas en venta en Madrid hasta 150.000€")
 
 # Botón para actualizar datos desde la API
 if st.sidebar.button("Buscar Propiedades"):
-    querystring = {
-        "order": order_by,
-        "operation": operation,
-        "locationId": "0-EU-ES-28",
-        "locationName": location_name,
-        "maxItems": "40",
-        "location": "es",
-        "locale": "es",
-        "minPrice": str(min_price_api),
-        "maxPrice": str(max_price_api)
-    }
-
-    df_properties = fetch_properties_data(querystring)
+    df_properties = fetch_properties_data()
 else:
     # Usar datos almacenados si existen
     df_properties = st.session_state.properties_data
@@ -125,7 +119,7 @@ if st.session_state.last_query_time:
 
 # Si no hay datos, detener ejecución
 if df_properties is None:
-    st.info("Configura los filtros y haz clic en 'Buscar Propiedades' para cargar datos.")
+    st.info("Haz clic en 'Buscar Propiedades' para cargar datos.")
     st.stop()
 
 # Filtros para los datos ya cargados
