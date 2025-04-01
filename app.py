@@ -5,45 +5,60 @@ from streamlit_folium import folium_static
 import requests
 from datetime import datetime
 import time
-import json
-import os
 import pickle
+import os
 
 # Título de la aplicación
 st.title("Explorador de Propiedades - Estilo Idealista")
 
-# Función para guardar datos en un archivo
-def save_data(data, filename="property_data.pkl"):
-    with open(filename, 'wb') as f:
-        pickle.dump(data, f)
+# Definir ruta para almacenamiento persistente
+DATA_FILE = "idealista_properties.pkl"
+TIMESTAMP_FILE = "idealista_last_query.pkl"
 
-    # Guardar también la fecha de la última consulta
-    timestamp = datetime.now()
-    with open("last_query_time.pkl", 'wb') as f:
-        pickle.dump(timestamp, f)
+# Funciones para almacenamiento persistente
+def save_data(df):
+    with open(DATA_FILE, 'wb') as f:
+        pickle.dump(df, f)
 
-# Función para cargar datos desde un archivo
-def load_data(filename="property_data.pkl"):
-    if os.path.exists(filename):
-        with open(filename, 'rb') as f:
-            return pickle.load(f)
+    # Guardar timestamp
+    with open(TIMESTAMP_FILE, 'wb') as f:
+        pickle.dump(datetime.now(), f)
+
+def load_data():
+    if os.path.exists(DATA_FILE):
+        try:
+            with open(DATA_FILE, 'rb') as f:
+                return pickle.load(f)
+        except:
+            return None
     return None
 
-# Función para cargar la fecha de la última consulta
 def load_timestamp():
-    if os.path.exists("last_query_time.pkl"):
-        with open("last_query_time.pkl", 'rb') as f:
-            return pickle.load(f)
+    if os.path.exists(TIMESTAMP_FILE):
+        try:
+            with open(TIMESTAMP_FILE, 'rb') as f:
+                return pickle.load(f)
+        except:
+            return None
     return None
 
-def contains_illegal_occupation(labels):
-    if isinstance(labels, list):
-        for label in labels:
-            if isinstance(label, dict) and label.get('name') in ['occupation.illegallyOccupied', 'occupation.bareOwnership']:
-                return True
-    return False
+# Función para asegurar que las columnas numéricas son correctas
+def ensure_numeric(df):
+    for col in ['price', 'rooms', 'bathrooms', 'size']:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+            # Reemplazar valores NaN con valores razonables
+            if col == 'price':
+                df[col] = df[col].fillna(0)
+            elif col == 'rooms':
+                df[col] = df[col].fillna(1)
+            elif col == 'bathrooms':
+                df[col] = df[col].fillna(1)
+            elif col == 'size':
+                df[col] = df[col].fillna(0)
+    return df
 
-# Función para llamar a la API y obtener todas las páginas
+# Función para llamar a la API
 def fetch_properties_data():
     url = "https://idealista7.p.rapidapi.com/listhomes"
     headers = {
@@ -86,8 +101,8 @@ def fetch_properties_data():
             progress_bar = st.progress(1/total_pages)
             progress_text = st.empty()
 
-            # Recorrer el resto de páginas
-            for page in range(2, total_pages + 1):
+            # Recorrer el resto de páginas (limitando a 5 para pruebas)
+            for page in range(2, min(total_pages + 1, 6)):
                 progress_text.text(f'Cargando página {page} de {total_pages}...')
                 progress_bar.progress(page/total_pages)
 
@@ -103,10 +118,11 @@ def fetch_properties_data():
             progress_bar.progress(1.0)
             progress_text.empty()
 
-    # Convertir a DataFrame
+    # Convertir a DataFrame y asegurar tipos de datos
     df = pd.DataFrame(all_properties)
+    df = ensure_numeric(df)
 
-    # Guardar datos en archivo
+    # Guardar datos para persistencia
     save_data(df)
 
     return df
@@ -118,7 +134,10 @@ last_query_time = load_timestamp()
 # Barra lateral
 st.sidebar.header("Filtros de Resultados")
 
+# Si hay datos, mostrar filtros
 if df_properties is not None:
+    df_properties = ensure_numeric(df_properties)
+
     # Obtener rangos de los datos
     min_price = int(df_properties["price"].min())
     max_price = int(df_properties["price"].max())
@@ -127,7 +146,7 @@ if df_properties is not None:
     min_size_val = int(df_properties["size"].min())
     min_bath_val = int(df_properties["bathrooms"].min())
 
-    # Configurar filtros de resultados
+    # Filtros
     price_range = st.sidebar.slider(
         "Rango de precio (€)",
         min_value=min_price,
@@ -155,7 +174,7 @@ if df_properties is not None:
     )
 
     # Filtro por municipio
-    municipalities = list(df_properties["municipality"].unique())
+    municipalities = list(df_properties["municipality"].dropna().unique())
     selected_municipalities = st.sidebar.multiselect(
         "Selecciona municipios",
         options=municipalities,
@@ -168,10 +187,10 @@ if df_properties is not None:
     exclude_text = st.sidebar.text_input("Excluir si contiene en descripción", "")
     include_keyword = st.sidebar.text_input("Buscar en descripción", "")
 else:
-    st.sidebar.info("Haz clic en el botón para cargar datos y mostrar filtros")
-    # Inicializar variables para evitar errores
-    price_range = (0, 0)
-    rooms_range = (0, 0)
+    st.sidebar.info("Haz clic en 'Actualizar Datos' para cargar propiedades.")
+    # Valores predeterminados para evitar errores
+    price_range = (0, 1)
+    rooms_range = (0, 1)
     min_size = 0
     min_bathrooms = 0
     selected_municipalities = []
@@ -213,42 +232,56 @@ if df_properties is None:
     st.info("Haz clic en 'Actualizar Datos' para cargar propiedades.")
     st.stop()
 
-# Aplicar filtros
-filtered_df = df_properties[
-    (df_properties["price"] >= price_range[0]) &
-    (df_properties["price"] <= price_range[1]) &
-    (df_properties["rooms"] >= rooms_range[0]) &
-    (df_properties["rooms"] <= rooms_range[1]) &
-    (df_properties["size"] >= min_size) &
-    (df_properties["bathrooms"] >= min_bathrooms)
-]
+# Aplicar filtros de forma segura
+try:
+    # Iniciar con todos los datos
+    filtered_df = df_properties.copy()
 
-# Filtrar por municipios
-if selected_municipalities:
-    filtered_df = filtered_df[filtered_df["municipality"].isin(selected_municipalities)]
+    # Aplicar filtros uno a uno
+    filtered_df = filtered_df[
+        (filtered_df["price"] >= price_range[0]) &
+        (filtered_df["price"] <= price_range[1])
+    ]
 
-# Filtrar por palabras clave en descripción
-if include_keyword:
-    filtered_df = filtered_df[filtered_df["description"].str.contains(include_keyword, case=False, na=False)]
+    filtered_df = filtered_df[
+        (filtered_df["rooms"] >= rooms_range[0]) &
+        (filtered_df["rooms"] <= rooms_range[1])
+    ]
 
-# Filtrar por texto a excluir
-if exclude_text:
-    exclude_terms = exclude_text.split('|')
-    for term in exclude_terms:
-        filtered_df = filtered_df[~filtered_df["description"].str.contains(term.strip(), case=False, na=False)]
+    filtered_df = filtered_df[filtered_df["size"] >= min_size]
 
-# Filtros predefinidos
-exclude_default = "subasta|pendiente de|puja|desahucio|local sin cambio de uso|cambio de uso|posisio|nuda propiedad|no se puede hipotecar|ocupado|ocupada|pujas|ocupacional|ilegal|okupada|okupado|sin posesi|procedimiento judicial"
-if exclude_rented:
-    exclude_default += "|alquilado"
+    filtered_df = filtered_df[filtered_df["bathrooms"] >= min_bathrooms]
 
-filtered_df = filtered_df[~filtered_df["description"].str.contains(exclude_default, case=False, na=False)]
+    # Filtrar por municipios
+    if selected_municipalities:
+        filtered_df = filtered_df[filtered_df["municipality"].isin(selected_municipalities)]
+
+    # Filtrar por palabras clave en descripción
+    if include_keyword:
+        filtered_df = filtered_df[filtered_df["description"].str.contains(include_keyword, case=False, na=False)]
+
+    # Filtrar por texto a excluir
+    if exclude_text:
+        exclude_terms = exclude_text.split('|')
+        for term in exclude_terms:
+            filtered_df = filtered_df[~filtered_df["description"].str.contains(term.strip(), case=False, na=False)]
+
+    # Filtros predefinidos
+    exclude_default = "subasta|pendiente de|puja|desahucio|local sin cambio de uso|cambio de uso|posisio|nuda propiedad|no se puede hipotecar|ocupado|ocupada|pujas|ocupacional|ilegal|okupada|okupado|sin posesi|procedimiento judicial"
+    if exclude_rented:
+        exclude_default += "|alquilado"
+
+    filtered_df = filtered_df[~filtered_df["description"].str.contains(exclude_default, case=False, na=False)]
+
+except Exception as e:
+    st.error(f"Error al aplicar filtros: {e}")
+    filtered_df = pd.DataFrame()
 
 # Mostrar resultados
 st.subheader(f"Resultados encontrados: {len(filtered_df)} propiedades")
 
 # Crear mapa
-if "latitude" in filtered_df.columns and "longitude" in filtered_df.columns:
+if "latitude" in filtered_df.columns and "longitude" in filtered_df.columns and len(filtered_df) > 0:
     st.subheader("Mapa de propiedades")
     m = folium.Map(location=[40.4168, -3.7038], zoom_start=10)
 
@@ -279,41 +312,46 @@ if len(filtered_df) > 0:
     with col2:
         st.metric("Tamaño medio", f"{int(filtered_df['size'].mean())}m²")
     with col3:
-        avg_price_sqm = int(filtered_df['price'].sum() / filtered_df['size'].sum())
-        st.metric("Precio medio por m²", f"{avg_price_sqm}€/m²")
-
-# Mostrar propiedades como tarjetas
-for _, row in filtered_df.iterrows():
-    st.markdown("---")
-    col1, col2 = st.columns([1, 2])
-
-    with col1:
-        if pd.notna(row.get("thumbnail")):
-            st.image(row["thumbnail"], use_container_width=True)
+        if filtered_df['size'].sum() > 0:
+            avg_price_sqm = int(filtered_df['price'].sum() / filtered_df['size'].sum())
+            st.metric("Precio medio por m²", f"{avg_price_sqm}€/m²")
         else:
-            st.image("https://placehold.co/300x200?text=Sin+Imagen", use_container_width=True)
+            st.metric("Precio medio por m²", "N/A")
 
-    with col2:
-        st.markdown(f"### {row['price']} €")
-        st.markdown(f"**{row['rooms']} habitaciones**, **{row['bathrooms']} baños**, **{row['size']} m²**")
+    # Mostrar propiedades como tarjetas
+    for _, row in filtered_df.iterrows():
+        st.markdown("---")
+        col1, col2 = st.columns([1, 2])
 
-        location_text = row['municipality']
-        if pd.notna(row.get('district')):
-            location_text += f", {row['district']}"
-        st.markdown(f"📍 {location_text}")
+        with col1:
+            if pd.notna(row.get("thumbnail")):
+                st.image(row["thumbnail"], use_container_width=True)
+            else:
+                st.image("https://placehold.co/300x200?text=Sin+Imagen", use_container_width=True)
 
-        price_per_sqm = round(row['price'] / row['size'], 2) if row['size'] > 0 else "N/A"
-        st.markdown(f"**Precio/m²:** {price_per_sqm} €/m²")
+        with col2:
+            st.markdown(f"### {row['price']} €")
+            st.markdown(f"**{row['rooms']} habitaciones**, **{row['bathrooms']} baños**, **{row['size']} m²**")
 
-        if pd.notna(row.get('description')) and isinstance(row['description'], str):
-            desc_text = row['description'][:200] + "..."
-        else:
-            desc_text = "Sin descripción disponible"
-        st.markdown(f"**Descripción:** {desc_text}")
+            location_text = row['municipality'] if pd.notna(row.get('municipality')) else "Desconocido"
+            if pd.notna(row.get('district')):
+                location_text += f", {row['district']}"
+            st.markdown(f"📍 {location_text}")
 
-        st.markdown(f"[Ver en Idealista]({row['url']})")
+            if row['size'] > 0:
+                price_per_sqm = round(row['price'] / row['size'], 2)
+                st.markdown(f"**Precio/m²:** {price_per_sqm} €/m²")
+            else:
+                st.markdown("**Precio/m²:** N/A")
+
+            if pd.notna(row.get('description')) and isinstance(row['description'], str):
+                desc_text = row['description'][:200] + "..."
+            else:
+                desc_text = "Sin descripción disponible"
+            st.markdown(f"**Descripción:** {desc_text}")
+
+            st.markdown(f"[Ver en Idealista]({row['url']})")
 
 # Si no hay resultados
 if len(filtered_df) == 0:
     st.warning("No se encontraron propiedades con los filtros seleccionados.")
-            
