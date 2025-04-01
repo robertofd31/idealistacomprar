@@ -179,18 +179,18 @@ if st.session_state.last_query_time:
 
     st.sidebar.info(f"Última actualización: hace {time_str}")
 
-# Si no hay datos, detener ejecución
-if df_properties is None:
-    st.info("Haz clic en 'Buscar Propiedades' para cargar datos.")
-    st.stop()
-
-# Filtrar por municipios
-if selected_municipalities:
-    filtered_df = filtered_df[filtered_df["municipality"].isin(selected_municipalities)]
-
-# Filtrar por palabras clave en descripción
-if include_keyword:
-    filtered_df = filtered_df[filtered_df["description"].str.contains(include_keyword, case=False, na=False)]
+    # Si no hay datos, detener ejecución
+    if df_properties is None:
+        st.info("Haz clic en 'Buscar Propiedades' para cargar datos.")
+        st.stop()
+    
+    # Filtrar por municipios
+    if selected_municipalities:
+        filtered_df = filtered_df[filtered_df["municipality"].isin(selected_municipalities)]
+    
+    # Filtrar por palabras clave en descripción
+    if include_keyword:
+        filtered_df = filtered_df[filtered_df["description"].str.contains(include_keyword, case=False, na=False)]
 
 # Filtrar por texto a excluir
 if exclude_text:
